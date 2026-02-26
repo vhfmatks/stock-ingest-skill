@@ -17,6 +17,7 @@ import os
 import re
 import sqlite3
 import sys
+import time
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
@@ -207,6 +208,19 @@ def to_iso_date(value: str | None) -> str | None:
     if not ymd:
         return None
     return f"{ymd[:4]}-{ymd[4:6]}-{ymd[6:8]}"
+
+
+def to_float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    raw = raw.replace(",", "").replace("%", "")
+    try:
+        return float(raw)
+    except ValueError:
+        return None
 
 
 def http_get_json(url: str, headers: dict[str, str] | None = None, timeout: float = 20.0) -> Any:
@@ -411,6 +425,82 @@ class KisClient:
                                 "raw": item,
                             }
                         )
+        return rows
+
+    def fetch_margin_rows(self, symbols: list[str]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for symbol in symbols:
+            try:
+                data = self._get(
+                    "/uapi/domestic-stock/v1/quotations/inquire-price",
+                    {
+                        "FID_COND_MRKT_DIV_CODE": "J",
+                        "FID_INPUT_ISCD": symbol,
+                    },
+                    tr_id="FHKST01010100",
+                )
+                if str(data.get("rt_cd")) != "0" and "초당 거래건수" in str(data.get("msg1", "")):
+                    time.sleep(0.25)
+                    data = self._get(
+                        "/uapi/domestic-stock/v1/quotations/inquire-price",
+                        {
+                            "FID_COND_MRKT_DIV_CODE": "J",
+                            "FID_INPUT_ISCD": symbol,
+                        },
+                        tr_id="FHKST01010100",
+                    )
+
+                if str(data.get("rt_cd")) != "0":
+                    rows.append(
+                        {
+                            "symbol": symbol,
+                            "margin_rate_pct": None,
+                            "is_full_margin": False,
+                            "collection_status": "failed",
+                            "message": str(data.get("msg1", "조회 실패")).strip() or "조회 실패",
+                        }
+                    )
+                    continue
+
+                output = data.get("output", {}) if isinstance(data.get("output"), dict) else {}
+                margin_rate_pct = to_float_or_none(output.get("marg_rate"))
+                is_full = bool(margin_rate_pct is not None and margin_rate_pct >= 100.0)
+
+                crdt_able = str(output.get("crdt_able_yn", "")).strip().upper()
+                if crdt_able == "N":
+                    is_full = True
+                    if margin_rate_pct is None:
+                        margin_rate_pct = 100.0
+
+                if margin_rate_pct is not None:
+                    message = f"증거금율 {margin_rate_pct}%"
+                    status = "collected"
+                elif is_full:
+                    message = "신용거래 불가로 100% 증거금 처리"
+                    status = "collected"
+                else:
+                    message = "증거금 정보 없음"
+                    status = "failed"
+
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "margin_rate_pct": margin_rate_pct,
+                        "is_full_margin": is_full,
+                        "collection_status": status,
+                        "message": message,
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "margin_rate_pct": None,
+                        "is_full_margin": False,
+                        "collection_status": "failed",
+                        "message": f"조회 실패: {exc}",
+                    }
+                )
         return rows
 
 
@@ -668,19 +758,39 @@ def upsert_event(conn: sqlite3.Connection, run_id: str, stock_code: str | None, 
     )
 
 
-def upsert_margin_placeholder(conn: sqlite3.Connection, run_id: str, stock_code: str, as_of: str) -> None:
+def upsert_margin_policy(
+    conn: sqlite3.Connection,
+    run_id: str,
+    stock_code: str,
+    as_of: str,
+    is_full_margin: bool = False,
+    margin_rate_pct: float | None = None,
+    collection_status: str = "collected",
+    source_note: str | None = None,
+) -> None:
     conn.execute(
         """
         INSERT INTO symbol_margin_policy (
           run_id, stock_code, as_of, is_full_margin, margin_rate_pct, collection_status, source_note, collected_at
-        ) VALUES (?, ?, ?, 0, NULL, 'unsupported', 'standalone skill does not fetch live margin yet', ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(stock_code, as_of) DO UPDATE SET
           run_id=excluded.run_id,
+          is_full_margin=excluded.is_full_margin,
+          margin_rate_pct=excluded.margin_rate_pct,
           collection_status=excluded.collection_status,
           source_note=excluded.source_note,
           collected_at=excluded.collected_at
         """,
-        (run_id, stock_code, as_of, now_iso()),
+        (
+            run_id,
+            stock_code,
+            as_of,
+            1 if is_full_margin else 0,
+            margin_rate_pct,
+            collection_status,
+            source_note,
+            now_iso(),
+        ),
     )
 
 
@@ -752,7 +862,7 @@ def ensure_exported_env(args: argparse.Namespace) -> tuple[str | None, str | Non
     scope = str(args.scope).strip().lower()
     is_dry = bool(args.dry_run)
 
-    need_kis = (("prices" in categories) or ("financials" in categories)) and source_profile in {"all", "kis"}
+    need_kis = any(cat in categories for cat in ("prices", "financials", "margins")) and source_profile in {"all", "kis"}
     need_dart = (scope == "all") or ("events" in categories and source_profile in {"all", "dart"})
     missing: list[str] = []
     if not is_dry and need_kis:
@@ -979,14 +1089,39 @@ def run_ingest(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                         row["event_rows"] += 1
                 conn.commit()
 
-        # margins stage (placeholder)
+        # margins stage
         if "margins" in categories:
-            as_of = to_iso_date(args.as_of_to) or to_iso_date(args.as_of) or today().isoformat()
-            for sym in symbols:
-                upsert_margin_placeholder(conn, run_id=run_id, stock_code=sym.stock_code, as_of=as_of)
-                row["margin_rows"] += 1
-            conn.commit()
-            notes.append("margins: standalone placeholder records inserted (live margin fetch not implemented)")
+            if args.source_profile not in {"all", "kis"}:
+                notes.append("margins skipped: source_profile does not include kis")
+            elif not kis_client:
+                notes.append("margins skipped: KIS_APP_KEY/KIS_APP_SECRET not provided")
+            else:
+                as_of = to_iso_date(args.as_of_to) or to_iso_date(args.as_of) or today().isoformat()
+                margin_rows = kis_client.fetch_margin_rows([sym.stock_code for sym in symbols])
+                collected_count = 0
+                failed_count = 0
+                for item in margin_rows:
+                    stock_code = normalize_symbol(str(item.get("symbol", "")).strip())
+                    if not stock_code:
+                        continue
+                    status_text = str(item.get("collection_status", "collected")).strip().lower() or "collected"
+                    if status_text == "collected":
+                        collected_count += 1
+                    else:
+                        failed_count += 1
+                    upsert_margin_policy(
+                        conn,
+                        run_id=run_id,
+                        stock_code=stock_code,
+                        as_of=as_of,
+                        is_full_margin=bool(item.get("is_full_margin")),
+                        margin_rate_pct=to_float_or_none(item.get("margin_rate_pct")),
+                        collection_status=status_text,
+                        source_note=str(item.get("message", "")).strip() or None,
+                    )
+                    row["margin_rows"] += 1
+                conn.commit()
+                notes.append(f"margins: collected={collected_count}, failed={failed_count}")
 
     except Exception as exc:  # noqa: BLE001
         status = "failed"

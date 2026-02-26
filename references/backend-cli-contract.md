@@ -55,7 +55,7 @@ scripts/run_backend_ingest.sh <command> [options]   # deprecated
 
 Non-dry-run `run` checks exported shell env:
 
-- prices/financials 포함 + source_profile all|kis:
+- prices/financials/margins 포함 + source_profile all|kis:
   - `KIS_APP_KEY`
   - `KIS_APP_SECRET`
 - scope=all 또는 events 포함:

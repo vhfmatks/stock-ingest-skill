@@ -28,6 +28,8 @@ scripts/standalone_stock_ingest.py
 4. Execute standalone ingest and persist to sqlite.
 5. Return JSON summary including `run_id`, status, row counts, notes.
 
+`margins` 단계는 KIS `inquire-price` 응답(`marg_rate`, `crdt_able_yn`) 기반으로 실데이터를 저장합니다.
+
 ## Simplified `run_type=all` mode
 
 Preferred flows:
