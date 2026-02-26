@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stock Ingest CLI"
+  short_description: "Run standalone stock ingest runtime with simplified all-mode presets"
+  default_prompt: "Use $stock-ingest to run standalone ingest via scripts/run_stock_ingest.sh with simple all-mode choices (single/all symbols + prices window fast/normal/full), then report run_id/status."
