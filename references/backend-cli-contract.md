@@ -58,6 +58,8 @@ Non-dry-run `run` checks exported shell env:
 - prices/financials/margins 포함 + source_profile all|kis:
   - `KIS_APP_KEY`
   - `KIS_APP_SECRET`
+- margins 포함 + source_profile all|kis:
+  - `KIS_ACCOUNT_NO`
 - scope=all 또는 events 포함:
   - `DART_API_KEY`
 

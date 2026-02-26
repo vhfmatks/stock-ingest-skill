@@ -17,7 +17,6 @@ import os
 import re
 import sqlite3
 import sys
-import time
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
@@ -252,11 +251,19 @@ def http_post_json(url: str, payload: dict[str, Any], headers: dict[str, str] | 
 
 
 class KisClient:
-    def __init__(self, app_key: str, app_secret: str, base_url: str, timeout: float):
+    def __init__(
+        self,
+        app_key: str,
+        app_secret: str,
+        base_url: str,
+        timeout: float,
+        account_no: str = "",
+    ):
         self.app_key = app_key
         self.app_secret = app_secret
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.account_no = str(account_no or "").strip()
         self._access_token: str | None = None
 
     def _token(self) -> str:
@@ -429,27 +436,29 @@ class KisClient:
 
     def fetch_margin_rows(self, symbols: list[str]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        if not symbols:
+            return rows
+
+        if not self.account_no or len(self.account_no) < 10:
+            return rows
+
+        cano = self.account_no[:8]
+        acnt_prdt_cd = self.account_no[8:10]
         for symbol in symbols:
             try:
                 data = self._get(
-                    "/uapi/domestic-stock/v1/quotations/inquire-price",
+                    "/uapi/domestic-stock/v1/trading/inquire-psbl-order",
                     {
-                        "FID_COND_MRKT_DIV_CODE": "J",
-                        "FID_INPUT_ISCD": symbol,
+                        "CANO": cano,
+                        "ACNT_PRDT_CD": acnt_prdt_cd,
+                        "PDNO": symbol,
+                        "ORD_UNPR": "0",
+                        "ORD_DVSN": "01",
+                        "CMA_EVLU_AMT_ICLD_YN": "Y",
+                        "OVRS_ICLD_YN": "N",
                     },
-                    tr_id="FHKST01010100",
+                    tr_id="TTTC8908R",
                 )
-                if str(data.get("rt_cd")) != "0" and "초당 거래건수" in str(data.get("msg1", "")):
-                    time.sleep(0.25)
-                    data = self._get(
-                        "/uapi/domestic-stock/v1/quotations/inquire-price",
-                        {
-                            "FID_COND_MRKT_DIV_CODE": "J",
-                            "FID_INPUT_ISCD": symbol,
-                        },
-                        tr_id="FHKST01010100",
-                    )
-
                 if str(data.get("rt_cd")) != "0":
                     rows.append(
                         {
@@ -462,21 +471,25 @@ class KisClient:
                     )
                     continue
 
-                output = data.get("output", {}) if isinstance(data.get("output"), dict) else {}
-                margin_rate_pct = to_float_or_none(output.get("marg_rate"))
-                is_full = bool(margin_rate_pct is not None and margin_rate_pct >= 100.0)
+                data2 = self._get(
+                    "/uapi/domestic-stock/v1/trading/intgr-margin",
+                    {
+                        "CANO": cano,
+                        "ACNT_PRDT_CD": acnt_prdt_cd,
+                        "PDNO": symbol,
+                    },
+                    tr_id="TTTC0869R",
+                )
 
-                crdt_able = str(output.get("crdt_able_yn", "")).strip().upper()
-                if crdt_able == "N":
-                    is_full = True
-                    if margin_rate_pct is None:
-                        margin_rate_pct = 100.0
+                margin_rate_pct: float | None = None
+                is_full = False
+                if str(data2.get("rt_cd")) == "0":
+                    output2 = data2.get("output", {}) if isinstance(data2.get("output"), dict) else {}
+                    margin_rate_pct = to_float_or_none(output2.get("acmga_rt"))
+                    is_full = bool(margin_rate_pct is not None and margin_rate_pct >= 100.0)
 
                 if margin_rate_pct is not None:
                     message = f"증거금율 {margin_rate_pct}%"
-                    status = "collected"
-                elif is_full:
-                    message = "신용거래 불가로 100% 증거금 처리"
                     status = "collected"
                 else:
                     message = "증거금 정보 없음"
@@ -870,6 +883,9 @@ def ensure_exported_env(args: argparse.Namespace) -> tuple[str | None, str | Non
             missing.append("KIS_APP_KEY")
         if not (args.kis_app_secret or "").strip():
             missing.append("KIS_APP_SECRET")
+    if not is_dry and "margins" in categories and source_profile in {"all", "kis"}:
+        if not (args.kis_account_no or "").strip():
+            missing.append("KIS_ACCOUNT_NO")
     if not is_dry and need_dart and not (args.dart_api_key or "").strip():
         missing.append("DART_API_KEY")
 
@@ -998,6 +1014,7 @@ def run_ingest(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             app_secret=kis_secret,
             base_url=args.kis_base_url,
             timeout=args.timeout,
+            account_no=args.kis_account_no,
         )
 
     status = "success"
@@ -1268,6 +1285,7 @@ def main(argv: list[str]) -> int:
     args.kis_base_url = args.kis_base_url or os.environ.get("KIS_BASE_URL", DEFAULT_KIS_BASE_URL)
     args.kis_app_key = os.environ.get("KIS_APP_KEY", "")
     args.kis_app_secret = os.environ.get("KIS_APP_SECRET", "")
+    args.kis_account_no = os.environ.get("KIS_ACCOUNT_NO", "")
     args.dart_api_key = os.environ.get("DART_API_KEY", "")
 
     command = args.command or "help"

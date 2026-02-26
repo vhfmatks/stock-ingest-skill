@@ -18,6 +18,7 @@ if [[ "${1:-}" == "config" ]]; then
   export KIS_APP_KEY=...
   export KIS_APP_SECRET=...
   export DART_API_KEY=...   # scope=all 또는 events 시 필요
+  export KIS_ACCOUNT_NO=... # margins 시 필요
 필요 시 ~/.bashrc 또는 ~/.profile에 저장 후 source 하세요.
 EOF
   exit 0

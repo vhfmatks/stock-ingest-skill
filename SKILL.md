@@ -28,7 +28,7 @@ scripts/standalone_stock_ingest.py
 4. Execute standalone ingest and persist to sqlite.
 5. Return JSON summary including `run_id`, status, row counts, notes.
 
-`margins` 단계는 KIS `inquire-price` 응답(`marg_rate`, `crdt_able_yn`) 기반으로 실데이터를 저장합니다.
+`margins` 단계는 KIS `inquire-psbl-order` + `intgr-margin` 응답 기반으로 실데이터를 저장합니다.
 
 ## Simplified `run_type=all` mode
 
@@ -82,6 +82,7 @@ Set in `~/.bashrc` or `~/.profile`, then `source`:
 export KIS_APP_KEY=...
 export KIS_APP_SECRET=...
 export DART_API_KEY=...   # scope=all 또는 events 포함 시 필요
+export KIS_ACCOUNT_NO=... # margins 포함 시 필요 (예: 12345678+01)
 ```
 
 Optional:
