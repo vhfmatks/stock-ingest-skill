@@ -33,6 +33,7 @@ scripts/run_backend_ingest.sh <command> [options]   # deprecated
 - `--kis-base-url <url>`
 - `--dart-base-url <url>`
 - `--kis-max-price-pages <int>`
+- `--env-file <path>` (optional, default: skill root `.env`)
 
 ## `run` options
 
@@ -64,6 +65,9 @@ Non-dry-run `run` checks exported shell env:
   - `DART_API_KEY`
 
 Missing keys → stop and print export guidance.
+
+Recommended: keep env in skill-local `.env` and run via `scripts/run_stock_ingest.sh`
+(wrapper auto-loads `.env`).
 
 ## SQLite policy
 

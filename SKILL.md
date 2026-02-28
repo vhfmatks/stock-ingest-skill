@@ -76,7 +76,16 @@ scripts/run_stock_ingest.sh db-check <run_id> --json
 
 ## Required exported env vars (non-dry-run)
 
-Set in `~/.bashrc` or `~/.profile`, then `source`:
+Use skill-local `.env` file (preferred):
+
+```bash
+cp .env.example .env
+```
+
+`scripts/run_stock_ingest.sh` auto-loads `.env` by default.
+If needed, use `--env-file /path/to/file.env` to override.
+
+Required keys (non-dry-run):
 
 ```bash
 export KIS_APP_KEY=...

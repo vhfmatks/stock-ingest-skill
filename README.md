@@ -30,7 +30,30 @@ scripts/run_stock_ingest.sh run \
   --json
 ```
 
-## 필수 환경변수 (실행 시)
+## Skill 전용 env 파일 사용
+
+쉘 전역(`~/.bashrc`, `~/.zshrc`) 대신, skill 루트의 `.env`를 사용합니다.
+
+```bash
+cp .env.example .env
+# .env 파일에 실제 값 입력
+```
+
+`scripts/run_stock_ingest.sh` 실행 시 기본으로 `.env`를 자동 로드합니다.
+
+다른 파일을 쓰고 싶다면:
+
+```bash
+scripts/run_stock_ingest.sh --env-file /path/to/stock-ingest.env run ...
+```
+
+또는:
+
+```bash
+STOCK_INGEST_ENV_FILE=/path/to/stock-ingest.env scripts/run_stock_ingest.sh run ...
+```
+
+## 필수 환경변수 (실행 시, .env 기준)
 
 ```bash
 export KIS_APP_KEY=...

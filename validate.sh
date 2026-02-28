@@ -2,6 +2,7 @@
 set -euo pipefail
 
 required=(
+  ".env.example"
   "SKILL.md"
   "agents/openai.yaml"
   "references/backend-cli-contract.md"
